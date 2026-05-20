@@ -1620,10 +1620,16 @@ if [ $OS_TYPE == 'CentOS' ]; then
     if [ $INSTALL_FIREWALLD == 'yes' ]; then
         echo "The installation script will open port $SERVER_PORT for TCP console access."
         echo "What other ports should be opened for TCP or UDP? (enter comma-separated"
-        echo "list of numbers, or hit return to open no additional ports.)"
+        echo "list of numbers, or hit return to accept the default.)"
+        echo
+        echo "Note: OpenRVDAS uses UDP ports 6221-6226 for instrument data by default."
+        echo "If you skip these, the data pipeline will be blocked by the firewall."
         echo
         IFS=',' read -p "Additional TCP ports to open? " -a TCP_PORTS_TO_OPEN
-        IFS=',' read -p "Additional UDP ports to open? " -a UDP_PORTS_TO_OPEN
+        IFS=',' read -p "Additional UDP ports to open? (default: 6221,6222,6223,6224,6225,6226) " -a UDP_PORTS_TO_OPEN
+        if [ ${#UDP_PORTS_TO_OPEN[@]} -eq 0 ]; then
+            UDP_PORTS_TO_OPEN=(6221 6222 6223 6224 6225 6226)
+        fi
     fi
 fi
 
@@ -1643,10 +1649,16 @@ if [ $OS_TYPE == 'Ubuntu' ]; then
     if [ $INSTALL_UFW == 'yes' ]; then
         echo "The installation script will open port $SERVER_PORT for TCP console access."
         echo "What other ports should be opened for TCP or UDP? (enter comma-separated"
-        echo "list of numbers, or hit return to open no additional ports.)"
+        echo "list of numbers, or hit return to accept the default.)"
+        echo
+        echo "Note: OpenRVDAS uses UDP ports 6221-6226 for instrument data by default."
+        echo "If you skip these, the data pipeline will be blocked by the firewall."
         echo
         IFS=',' read -p "Additional TCP ports to open? " -a TCP_PORTS_TO_OPEN
-        IFS=',' read -p "Additional UDP ports to open? " -a UDP_PORTS_TO_OPEN
+        IFS=',' read -p "Additional UDP ports to open? (default: 6221,6222,6223,6224,6225,6226) " -a UDP_PORTS_TO_OPEN
+        if [ ${#UDP_PORTS_TO_OPEN[@]} -eq 0 ]; then
+            UDP_PORTS_TO_OPEN=(6221 6222 6223 6224 6225 6226)
+        fi
     fi
 fi
 
