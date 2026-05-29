@@ -1871,11 +1871,11 @@ if [ $OS_TYPE == 'MacOS' ]; then
 
 # Linux
 elif [ $OS_TYPE == 'CentOS' ] || [ $OS_TYPE == 'Ubuntu' ]; then
+    sudo mkdir -p /var/run/supervisor/
+    sudo chgrp $RVDAS_GROUP /var/run/supervisor
+
     # CentOS/RHEL
     if [ $OS_TYPE == 'CentOS' ]; then
-        # Socket lives in a subdirectory; ensure it exists and is group-accessible
-        sudo mkdir -p /var/run/supervisor/
-        sudo chgrp $RVDAS_GROUP /var/run/supervisor
         sudo systemctl enable supervisord
         sudo systemctl restart supervisord
     else # Ubuntu/Debian
