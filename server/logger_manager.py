@@ -223,6 +223,11 @@ class LoggerManager:
             for logger in list(self.logger_states):
                 self._delete_logger(logger)
 
+        # Give our data server writer a chance to deliver anything still
+        # queued (e.g. the loggers' final stderr lines) before we exit.
+        if self.data_server_writer:
+            self.data_server_writer.close()
+
     ############################
     def update_configs(self):
         """Fetch the latest desired configs from the API and start/stop

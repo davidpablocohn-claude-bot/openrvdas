@@ -64,6 +64,9 @@ class RecordingWriter:
     def write(self, record):
         self.records.append(record)
 
+    def close(self):
+        pass
+
 
 ################################################################################
 class TestLoggerManager(unittest.TestCase):
