@@ -299,9 +299,17 @@ class LoggerManager:
 
         stderr_filename = self.stderr_file_pattern.format(logger=logger)
 
+        # The runner captures the logger's actual stderr (fd 2) via a pipe
+        # and relays each line back to us; we forward them to the cached
+        # data server over our own connection, so the (possibly dying)
+        # logger process is never responsible for delivering its own
+        # death message.
+        def stderr_callback(line, logger=logger):
+            self._forward_logger_stderr(logger, line)
+
         runner = LoggerRunner(config=config, name=logger,
                               stderr_filename=stderr_filename,
-                              stderr_data_server=self.data_server_websocket,
+                              stderr_callback=stderr_callback,
                               logger_log_level=self.logger_log_level)
         self.logger_states[logger] = LoggerState(config=config, runner=runner)
         runner.start()
@@ -511,6 +519,17 @@ class LoggerManager:
 
             # Whether or not we've sent an update, sleep
             time.sleep(self.interval * 2)
+
+    ############################
+    def _forward_logger_stderr(self, logger, line):
+        """Receive one line of a logger's stderr from its LoggerRunner's
+        relay thread and forward it to the cached data server. Lines arrive
+        already formatted/timestamped by the logger process itself.
+        """
+        if self.data_server_writer:
+            record = DASRecord(data_id='stderr',
+                               fields={'stderr:logger:' + logger: line})
+            self.data_server_writer.write(record)
 
     ############################
     def _write_record_to_data_server(self, field_name, record):

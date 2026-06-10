@@ -53,6 +53,18 @@ def make_cruise_definition(source_file, dest_file, tail=True):
     }
 
 
+############################
+class RecordingWriter:
+    """Stand-in for the manager's CachedDataWriter; just records what it's
+    given."""
+
+    def __init__(self):
+        self.records = []
+
+    def write(self, record):
+        self.records.append(record)
+
+
 ################################################################################
 class TestLoggerManager(unittest.TestCase):
     ############################
@@ -149,6 +161,35 @@ class TestLoggerManager(unittest.TestCase):
         # Once failed, further checks should leave it failed, not restart it.
         manager._check_loggers()
         self.assertTrue(runner.is_failed())
+
+        manager.quit()
+
+    ############################
+    def test_stderr_forwarded_to_data_server(self):
+        """The stderr of a logger that crashes on startup should still reach
+        the data server writer, via the runner's relay and the manager's
+        callback."""
+        cruise_definition = make_cruise_definition(self.source_name,
+                                                   self.dest_name)
+        api, manager = self._make_manager(cruise_definition)
+        manager.data_server_writer = RecordingWriter()
+
+        bad_config = {
+            'name': 'test->bad',
+            'readers': {'class': 'NoSuchReaderClass', 'kwargs': {}},
+            'writers': {'class': 'TextFileWriter',
+                        'kwargs': {'filename': self.dest_name}}
+        }
+        manager._apply_configs({'test': bad_config})
+
+        def stderr_arrived():
+            return any('NoSuchReaderClass' in str(record.fields)
+                       for record in manager.data_server_writer.records)
+        self._wait_for(stderr_arrived)
+
+        # Check the record is labeled the way the console expects
+        for record in manager.data_server_writer.records:
+            self.assertIn('stderr:logger:test', record.fields)
 
         manager.quit()
 
