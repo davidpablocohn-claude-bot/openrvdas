@@ -9,14 +9,14 @@ Can be run from the command line as follows:
      --stderr_file /var/log/openrvdas/gyr1.stderr
 ```
 
-But its main intended use is to be invoked by another module to start
-a logger in its own, non-blocking process:
+But its main intended use is to be invoked by another module (such as
+server/logger_manager.py) to start a logger in its own, non-blocking
+process:
 ```
     runner = LoggerRunner(config=config, name=logger,
-                          stderr_file=stderr_file,
+                          stderr_filename=stderr_filename,
                           logger_log_level=self.logger_log_level)
-    self.logger_runner_map[logger] = runner
-    self.logger_runner_map[logger].start()
+    runner.start()
 ```
 Simulated Serial Ports:
 
@@ -61,12 +61,12 @@ from logger.utils.stderr_logging import StdErrLoggingHandler  # noqa: E402
 # Rotate stderr logs out so that their sizes remain manageable. Plan to keep all
 # stderr logs, but don't swamp if something goes awry. Note: these values
 # should probably be extracted to a settings.py file somewhere.
-STDERR_MAX_BYTES = 1000000  # 10M
+STDERR_MAX_BYTES = 1000000  # 1M per file
 STDERR_BACKUP_COUNT = 100  # 100 backups should be plenty
 
 
 ################################################################################
-def kill_handler(self, signum):
+def kill_handler(signum, frame):
     """Translate an external signal (such as we'd get from os.kill) into a
     KeyboardInterrupt, which will signal the start() loop to exit nicely."""
     logging.info('Received external kill')
