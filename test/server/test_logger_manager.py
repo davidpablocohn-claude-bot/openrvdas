@@ -135,7 +135,8 @@ class TestLoggerManager(unittest.TestCase):
 
     ############################
     def test_restart_and_fail(self):
-        """A logger that dies repeatedly should be restarted up to max_tries
+        """A logger that dies repeatedly should be restarted - driven by the
+        stderr pipe-EOF death signal, with no polling - up to max_tries
         times, then declared FAILED."""
         # tail=False, so the logger process exits once it's read the file.
         cruise_definition = make_cruise_definition(self.source_name,
@@ -145,22 +146,20 @@ class TestLoggerManager(unittest.TestCase):
         api.set_active_mode('on')
         manager.update_configs()
 
-        runner = manager.logger_states['test'].runner
-        self._wait_for(lambda: not runner.is_alive())
+        # Each death should trigger a restart via the death callback; after
+        # max_tries rapid deaths the logger should be declared FAILED. Note
+        # that we never call _check_loggers() - there is no polling here.
+        self._wait_for(
+            lambda: manager.get_status()['test']['status'] == 'FAILED',
+            timeout=30)
 
-        # First death: should be restarted.
-        manager._check_loggers()
-        self.assertFalse(runner.is_failed())
-        self._wait_for(lambda: not runner.is_alive())
+        state = manager.logger_states['test']
+        self.assertEqual(state.restart_count, 2)
+        self.assertTrue(state.runner.is_failed())
 
-        # Second death within min_uptime: max_tries reached, mark FAILED.
+        # Once failed, the polling check should leave it failed too.
         manager._check_loggers()
-        self.assertTrue(runner.is_failed())
-        self.assertEqual(manager.get_status()['test']['status'], 'FAILED')
-
-        # Once failed, further checks should leave it failed, not restart it.
-        manager._check_loggers()
-        self.assertTrue(runner.is_failed())
+        self.assertTrue(state.runner.is_failed())
 
         manager.quit()
 
@@ -203,12 +202,11 @@ class TestLoggerManager(unittest.TestCase):
         api.set_active_mode('on')
         manager.update_configs()
 
-        runner = manager.logger_states['test'].runner
-        for _ in range(3):
-            self._wait_for(lambda: not runner.is_alive())
-            manager._check_loggers()
-            self.assertFalse(runner.is_failed())
+        # Death-callback-driven restarts should just keep coming.
+        state = manager.logger_states['test']
+        self._wait_for(lambda: state.restart_count >= 3, timeout=30)
 
+        self.assertFalse(state.runner.is_failed())
         self.assertNotEqual(manager.get_status()['test']['status'], 'FAILED')
         manager.quit()
 

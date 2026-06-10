@@ -119,7 +119,8 @@ def config_is_runnable(config):
 class LoggerRunner:
     ############################
     def __init__(self, config, name=None, stderr_filename=None,
-                 stderr_callback=None, logger_log_level=logging.WARNING):
+                 stderr_callback=None, death_callback=None,
+                 logger_log_level=logging.WARNING):
         """Create a LoggerRunner.
         ```
         config   - Python dict containing the logger configuration to be run
@@ -133,6 +134,13 @@ class LoggerRunner:
                    logger's stderr as it is received. Lines are passed as
                    str, without trailing newline.
 
+        death_callback - Optional function to call (with this LoggerRunner
+                   as its single argument) when the process dies
+                   unexpectedly. Called from the stderr relay thread when
+                   the stderr pipe hits EOF and the process has been
+                   reaped - i.e. after the process's last words have been
+                   delivered. Not called for deliberate quit() shutdowns.
+
         logger_log_level - At what logging level our logger should operate.
         ```
         If neither stderr_filename nor stderr_callback are specified, the
@@ -142,6 +150,7 @@ class LoggerRunner:
         self.name = name or config.get('name', 'Unnamed logger')
         self.stderr_filename = stderr_filename
         self.stderr_callback = stderr_callback
+        self.death_callback = death_callback
         self.logger_log_level = logger_log_level
 
         self.process = None     # the subprocess.Popen running the logger
@@ -224,8 +233,25 @@ class LoggerRunner:
             line = line_bytes.decode('utf-8', errors='replace').rstrip('\n')
             self._handle_stderr_line(line)
         process.stderr.close()
+
+        # EOF means every copy of the child's stderr write fd has been
+        # closed - almost always because the child has exited. Reap it; if
+        # it is somehow still running with a closed stderr, don't report a
+        # death.
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            logging.warning('Logger %s closed its stderr but is still '
+                            'running?', self.name)
+            return
         logging.debug('Logger %s stderr relay got EOF; child has exited.',
                       self.name)
+
+        # By this point the child's last words have been delivered, so an
+        # immediate restart can't clobber them. Don't report deliberate
+        # shutdowns.
+        if self.death_callback and not self.quit_flag:
+            self.death_callback(self)
 
     ############################
     def _handle_stderr_line(self, line):

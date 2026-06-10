@@ -307,9 +307,16 @@ class LoggerManager:
         def stderr_callback(line, logger=logger):
             self._forward_logger_stderr(logger, line)
 
+        # The relay thread also tells us - via pipe EOF - when the process
+        # has died, so we can restart it immediately instead of waiting
+        # for the next polling check.
+        def death_callback(runner, logger=logger):
+            self._handle_logger_death(runner, logger)
+
         runner = LoggerRunner(config=config, name=logger,
                               stderr_filename=stderr_filename,
                               stderr_callback=stderr_callback,
+                              death_callback=death_callback,
                               logger_log_level=self.logger_log_level)
         self.logger_states[logger] = LoggerState(config=config, runner=runner)
         runner.start()
@@ -328,50 +335,79 @@ class LoggerManager:
 
     ############################
     def _check_loggers(self):
-        """Check that all the loggers we ought to be running are running,
-        and restart any that have died unexpectedly. If a logger has died
-        max_tries times without staying up at least min_uptime seconds,
-        declare it failed and stop trying.
+        """Polling safety net: check that all the loggers we ought to be
+        running are running, and restart any that have died unexpectedly.
+        The primary death signal is _handle_logger_death(), called by each
+        runner's stderr relay thread when its pipe hits EOF; this loop
+        catches anything that slips past it.
         """
-        logging.info('Checking loggers...')
+        logging.debug('Checking loggers...')
         with self.config_lock:
             for logger, state in self.logger_states.items():
-                runner = state.runner
-                if not runner.is_runnable():
-                    logging.info('%s - okay; not runnable', logger)
-                    continue
+                self._consider_restart(logger, state)
 
-                if runner.is_alive():
-                    logging.info('%s - okay; running', logger)
-                    continue
+    ############################
+    def _consider_restart(self, logger, state):
+        """If the passed logger is unexpectedly dead, restart it - unless it
+        has died max_tries times without staying up at least min_uptime
+        seconds, in which case declare it failed and stop trying. ONLY CALL
+        THIS WITH config_lock HELD, for thread safety.
+        """
+        runner = state.runner
+        if not runner.is_runnable():
+            return
+        if runner.is_alive():
+            return
+        if runner.is_failed():
+            return
 
-                if runner.is_failed():
-                    logging.info('%s - failed', logger)
-                    continue
+        # If we're here, runner is runnable, is not running, and hasn't
+        # yet been labeled as a failed logger.
+        logging.warning('%s unexpectedly dead.', logger)
 
-                # If we're here, runner is runnable, is not running, and
-                # hasn't yet been labeled as a failed logger.
-                logging.warning('%s unexpectedly dead.', logger)
+        # How long was it up? If long enough, give it a clean slate.
+        if time.time() - state.last_started < self.min_uptime:
+            state.restart_count += 1
+        else:
+            state.restart_count = 0
 
-                # How long was it up? If long enough, give it a clean slate.
-                if time.time() - state.last_started < self.min_uptime:
-                    state.restart_count += 1
-                else:
-                    state.restart_count = 0
+        # If we've restarted too many times recently, declare the logger
+        # failed and move on. max_tries of zero means never stop retrying.
+        if self.max_tries and state.restart_count >= self.max_tries:
+            runner.failed = True
+            logging.warning('%s has failed %s times; not restarting',
+                            logger, state.restart_count)
+            return
 
-                # If we've restarted too many times recently, declare the
-                # logger failed and move on. max_tries of zero means
-                # never stop retrying.
-                if self.max_tries and state.restart_count >= self.max_tries:
-                    runner.failed = True
-                    logging.warning('%s has failed %s times; not restarting',
-                                    logger, state.restart_count)
-                    continue
+        # If here, we're going to try restarting.
+        logging.info('%s - restarting', logger)
+        state.last_started = time.time()
+        runner.start()
 
-                # If here, we're going to try restarting.
-                logging.info('%s - restarting', logger)
-                state.last_started = time.time()
-                runner.start()
+    ############################
+    def _handle_logger_death(self, runner, logger):
+        """Called - from the dead runner's stderr relay thread - when a
+        logger process's stderr pipe hits EOF, i.e. the process has exited
+        and its last words have been delivered. Restart it (or declare it
+        failed) right away rather than waiting for the next polling check.
+        """
+        if self.quit_flag or runner.quit_flag:
+            return  # deliberate shutdown, not a death
+
+        # Acquire the lock with a timeout: a manager thread holding it may
+        # be in runner.quit(), joining the very relay thread we're running
+        # in. Re-checking the quit flags lets us bail out instead of
+        # stalling that join.
+        while not self.config_lock.acquire(timeout=0.5):
+            if self.quit_flag or runner.quit_flag:
+                return
+        try:
+            state = self.logger_states.get(logger)
+            if not state or state.runner is not runner:
+                return  # stale notification; logger was reconfigured
+            self._consider_restart(logger, state)
+        finally:
+            self.config_lock.release()
 
     ############################
     def get_status(self):
