@@ -455,7 +455,11 @@ class LoggerManager:
                 self.update_configs()
                 self._check_loggers()
                 self._send_status()
-            except (AttributeError, KeyError, TypeError, ValueError) as e:
+            except Exception as e:
+                # Catch broadly: a transient API error (e.g. SQLAlchemy
+                # NoResultFound when no cruise is loaded yet) must not kill
+                # this thread; we recover on the next iteration. See
+                # upstream #562.
                 logging.warning('Error in logger update loop: %s', e)
             time.sleep(self.interval)
 
@@ -509,7 +513,7 @@ class LoggerManager:
             logging.info('Sending updated cruise definitions to CDS.')
             self._write_record_to_data_server(
                 'status:cruise_definition', cruise_dict)
-        except (AttributeError, ValueError, TypeError) as e:
+        except Exception as e:
             logging.info('Failed to update cruise definition: %s', e)
 
     ############################
@@ -555,7 +559,7 @@ class LoggerManager:
                     logging.info('New cruise definition detected - rebuilding maps.')
                     self.load_definition_from_api()
 
-            except (AttributeError, ValueError, TypeError) as e:
+            except Exception as e:
                 logging.warning('Error checking cruise definition: %s', e)
 
             # Whether or not we've sent an update, sleep
@@ -621,7 +625,7 @@ if __name__ == '__main__':  # noqa: C901
     parser.add_argument('--mode', dest='mode', action='store', default=None,
                         help='Optional name of mode to start system in.')
 
-    database_choices = ['memory', 'django']
+    database_choices = ['memory', 'django', 'fastapi']
     if SQLITE_API_DEFINED:
         database_choices.append('sqlite')
     parser.add_argument('--database', dest='database', action='store',
@@ -721,6 +725,9 @@ if __name__ == '__main__':  # noqa: C901
     elif args.database == 'sqlite':
         from server.sqlite_server_api import SQLiteServerAPI  # noqa F811
         api = SQLiteServerAPI()
+    elif args.database == 'fastapi':
+        from server.fastapi_server_api import FastAPIServerAPI  # noqa F811
+        api = FastAPIServerAPI()
     else:
         raise ValueError('Illegal arg for --database: "%s"' % args.database)
 
