@@ -203,6 +203,7 @@ are in `server/supervisord/`.
   ignore)
 - Prefer composition over inheritance — snap components together rather than
   subclassing heavily
+- Components should make use of the type hints-based utility in base_module.py to determine whether they can handle a particular type of input, and how to handle it
 
 ## What NOT to Do
 
